@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?ccsproject version="1.0"?>
+<projectOptions>
+	<ccsVariant value="50:Theia-based"/>
+	<ccsVersion value="70.1.1"/>
+	<deviceFamily value="TMS470"/>
+	<executableActions value=""/>
+	<createSlaveProjects value=""/>
+	<ignoreDefaultDeviceSettings value="true"/>
+	<ignoreDefaultCCSSettings value="true"/>
+	<templateProperties value="id=vital_signs_xwrl64xx_appss.projectspec.vital_signs_xwrl64xx,products=sysconfig:1.20.0;MMWAVE-L-SDK:05.05.00.02;,target=ti.targets.arm.elf.M4F,platform=ti.platforms.cortexM:IWRL6432:false:200,buildProfile=release"/>
+	<origin value="C:\ti\radar_toolbox_3_00_00_05\source\ti\examples\Industrial_and_Personal_Electronics\Vital_Signs\IWRL6432_Vital_Signs\src\6432\vital_signs_xwrl64xx_appss.projectspec"/>
+	<filesToOpen value=""/>
+</projectOptions>
