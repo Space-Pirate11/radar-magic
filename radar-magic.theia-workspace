@@ -4,5 +4,19 @@
       "path": ""
     }
   ],
-  "settings": {}
+  "settings": {},
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "vital_signs_xwrl64xx",
+        "type": "ccs-debug",
+        "request": "launch",
+        "projectInfo": {
+          "name": "vital_signs_xwrl64xx",
+          "resourceId": "/vital_signs_xwrl64xx"
+        }
+      }
+    ]
+  }
 }
