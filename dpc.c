@@ -121,6 +121,8 @@ extern uint32_t gpioBaseAddrLed, pinNumLed;
 
 #define MMWDEMO_RFPARSER_SPEED_OF_LIGHT_IN_METERS_PER_SEC (3e8)
 
+#define MANUAL_VS_RANGE_BIN 1
+
 extern MmwDemo_MSS_MCB gMmwMssMCB; 
 extern MMWave_temperatureStats  tempStats;
 extern uint8_t pgVersion;
@@ -2052,10 +2054,13 @@ void DPC_Init()
 
     #if (CLI_REMOVAL == 0 || TRACKER_CLASSIFIER_ENABLE == 1)
     {
-        if (!gMmwMssMCB.oneTimeConfigDone)
-        {
-            udopProc_dpuInit();
-            trackerProc_dpuInit();
+        if (gMmwMssMCB.trackerCfg.staticCfg.trackerEnabled)
+        {   
+            if (!gMmwMssMCB.oneTimeConfigDone)
+            {
+                udopProc_dpuInit();
+                trackerProc_dpuInit();
+            }
         }
     }
     #endif
@@ -2590,10 +2595,12 @@ void DPC_Execute(){
 
         #if (CLI_REMOVAL == 0 || TRACKER_CLASSIFIER_ENABLE == 1)
         {
+            uint32_t bytesPerSample = 4; // Verified sizeof(cmplx16ImRe_t)
+
+            // --- Run Tracker Processing if Enabled ---
             if(gMmwMssMCB.trackerCfg.staticCfg.trackerEnabled)
             {
                 uint32_t trackerStartTime = Cycleprofiler_getTimeStamp();
-
                 /* Group tracker DPU */
                 retVal = DPU_TrackerProc_process(gMmwMssMCB.trackerProcDpuHandle,
                                                 (uint16_t) (numDetectedPoints[0] + numDetectedPoints[1]),
@@ -2605,27 +2612,48 @@ void DPC_Execute(){
                     DebugP_assert(0);
                 }
                 gMmwMssMCB.stats.trackerTime_us = (Cycleprofiler_getTimeStamp() - trackerStartTime)/FRAME_REF_TIMER_CLOCK_MHZ;
-            }
 
-            if (result->trackerOutParams.numTargets > 0)
-            {
-                if (vsDataCount == 0)
+                // --- Determine VS Bin based on Tracker Results ---
+                if (result->trackerOutParams.numTargets > 0)
                 {
+                    // Target found by tracker
+                    // Original if (vsDataCount == 0) check removed - calculate bin every frame target exists
                     xDistForVS       = (float)result->trackerOutParams.tList[0].posX;
                     yDistForVS       = (float)result->trackerOutParams.tList[0].posY;
                     radialDistance = sqrtf((xDistForVS * xDistForVS) + (yDistForVS * yDistForVS));
-                    vsRangeBin        = (uint16_t)(radialDistance / 0.093);
-                    vsBaseAddr         = (uint32_t)gMmwMssMCB.radarCube[0].data;
-                    vsBaseAddr         = vsBaseAddr + (vsRangeBin * 4) - 8;
+                    // Corrected bin calculation using rangeStep
+                    vsRangeBin       = (uint16_t)roundf(radialDistance / gMmwMssMCB.rangeStep);
+
+                    // Boundary check and Base Address Calculation (Revised)
+                    vsRangeBin = MAX(2, vsRangeBin); // Ensure bin index is >= 2
+                    // Note: Upper bound check removed based on how MmwDemo_runVitalSigns reads data
+                    vsBaseAddr = (uint32_t)gMmwMssMCB.radarCube[0].data + (vsRangeBin - 2) * bytesPerSample;
+
+                    indicateNoTarget = 0; // Target found
                 }
-                indicateNoTarget = 0;
+                else
+                {
+                    // Tracker enabled, but no target found
+                    indicateNoTarget = 1;
+                    vsLoop           = 0; // Reset loop
+                    vsRangeBin       = 0; // Default report bin
+                    // vsBaseAddr not needed
+                }
             }
             else
             {
-                indicateNoTarget = 1;
-                vsLoop           = 0;
+                // --- Tracker Disabled: Use Manual Bin ---
+                vsRangeBin = MANUAL_VS_RANGE_BIN;
+
+                // Boundary check and Base Address Calculation (Revised)
+                vsRangeBin = MAX(2, vsRangeBin); // Ensure bin index is >= 2
+                // Note: Upper bound check removed based on how MmwDemo_runVitalSigns reads data
+                vsBaseAddr = (uint32_t)gMmwMssMCB.radarCube[0].data + (vsRangeBin - 2) * bytesPerSample;
+
+                indicateNoTarget = 0; // Process manual bin
             }
-    
+
+            // --- Setup vitalSignsAntenna (Original Code) ---
             vitalSignsAntenna.vsActiveAntennaGeometryCfg[0].row = gMmwMssMCB.activeAntennaGeometryCfg.ant[0].row;
             vitalSignsAntenna.vsActiveAntennaGeometryCfg[0].col = gMmwMssMCB.activeAntennaGeometryCfg.ant[0].col;
             vitalSignsAntenna.vsActiveAntennaGeometryCfg[1].row = gMmwMssMCB.activeAntennaGeometryCfg.ant[1].row;
@@ -2642,53 +2670,65 @@ void DPC_Execute(){
             vitalSignsAntenna.numAntRow = gMmwMssMCB.numAntRow;
             vitalSignsAntenna.numRxAntennas = gMmwMssMCB.numRxAntennas;
             vitalSignsAntenna.numTxAntennas = gMmwMssMCB.numTxAntennas;
-            vitalSignsAntenna.numRangeBins = gMmwMssMCB.numRangeBins;
-    
+            vitalSignsAntenna.numRangeBins = gMmwMssMCB.numRangeBins; // Total number of range bins
+
+            // --- Call Vital Signs Function (Original Location) ---
+            // This now uses the vsBaseAddr and indicateNoTarget determined by the logic above
             vsLoop = MmwDemo_runVitalSigns(vsBaseAddr, indicateNoTarget, vsLoop, vitalSignsAntenna);
 
+            // --- Micro-Doppler Processing (Original Code, with added check) ---
             if (gMmwMssMCB.microDopplerCliCfg.enabled)
             {
-                uint32_t microDopplerStartTime = Cycleprofiler_getTimeStamp();
-                trackerData.numTargets = result->trackerOutParams.numTargets;
-                trackerData.numIndices = result->trackerOutParams.numIndices;
-                trackerData.numIndicesMajorMotion = numDetectedPoints[0];
-                trackerData.numIndicesMinorMotion = numDetectedPoints[1];
-                trackerData.tIndex = result->trackerOutParams.targetIndex;
-
-                for (i = 0; i < trackerData.numTargets; i++)
+                 // Only process if tracker is enabled AND a target was selected (indicateNoTarget == 0)
+                if(gMmwMssMCB.trackerCfg.staticCfg.trackerEnabled && indicateNoTarget == 0)
                 {
-                    trackerData.tList[i].tid  = result->trackerOutParams.tList[i].tid;
-                    trackerData.tList[i].posX = result->trackerOutParams.tList[i].posX;
-                    trackerData.tList[i].posY = result->trackerOutParams.tList[i].posY;
-                    trackerData.tList[i].posZ = result->trackerOutParams.tList[i].posZ;
-                    if (gMmwMssMCB.microDopplerCliCfg.circShiftAroundCentroid)
+                    uint32_t microDopplerStartTime = Cycleprofiler_getTimeStamp();
+                    DPU_uDopProc_TrackerData trackerData; // Define locally if not already
+                    memset(&trackerData, 0, sizeof(DPU_uDopProc_TrackerData)); // Initialize trackerData
+
+
+                    trackerData.numTargets = result->trackerOutParams.numTargets;
+                    trackerData.numIndices = result->trackerOutParams.numIndices;
+                    trackerData.numIndicesMajorMotion = numDetectedPoints[0];
+                    trackerData.numIndicesMinorMotion = numDetectedPoints[1];
+                    trackerData.tIndex = result->trackerOutParams.targetIndex;
+
+                    // Check bounds before accessing tList
+                    uint32_t numTargetsToProcess = (trackerData.numTargets < TRACKER_MAX_NUM_TR) ? trackerData.numTargets : TRACKER_MAX_NUM_TR;
+                    for (i = 0; i < numTargetsToProcess; i++)
                     {
-                        trackerData.tList[i].velX = result->trackerOutParams.tList[i].velX;
-                        trackerData.tList[i].velY = result->trackerOutParams.tList[i].velY;
-                        trackerData.tList[i].velZ = result->trackerOutParams.tList[i].velZ;
+                        trackerData.tList[i].tid  = result->trackerOutParams.tList[i].tid;
+                        trackerData.tList[i].posX = result->trackerOutParams.tList[i].posX;
+                        trackerData.tList[i].posY = result->trackerOutParams.tList[i].posY;
+                        trackerData.tList[i].posZ = result->trackerOutParams.tList[i].posZ;
+                        if (gMmwMssMCB.microDopplerCliCfg.circShiftAroundCentroid)
+                        {
+                            trackerData.tList[i].velX = result->trackerOutParams.tList[i].velX;
+                            trackerData.tList[i].velY = result->trackerOutParams.tList[i].velY;
+                            trackerData.tList[i].velZ = result->trackerOutParams.tList[i].velZ;
+                        }
                     }
-                }
 
-                result->microDopplerOutParams.uDopplerOutput = gMmwMssMCB.uDopProcOutParams.uDopplerOutput;
-                result->microDopplerOutParams.uDopplerFeatures = gMmwMssMCB.uDopProcOutParams.uDopplerFeatures;
+                    result->microDopplerOutParams.uDopplerOutput = gMmwMssMCB.uDopProcOutParams.uDopplerOutput;
+                    result->microDopplerOutParams.uDopplerFeatures = gMmwMssMCB.uDopProcOutParams.uDopplerFeatures;
 
-                retVal = DPU_uDopProc_process(gMmwMssMCB.microDopDpuHandle,
-                                            &gMmwMssMCB.radarCube[0], //Major motion radar cube
-                                            &gMmwMssMCB.detMatrix[0], //Major motion detection matrix
-                                            &trackerData,
-                                            &result->microDopplerOutParams);
-                if (retVal != 0)
-                {
-                    CLI_write("Error: DPU_uDopProc_process failed with error code %d", retVal);
-                    DebugP_assert(0);
-                }
-                gMmwMssMCB.stats.microDopplerDpuTime_us = (Cycleprofiler_getTimeStamp() - microDopplerStartTime)/FRAME_REF_TIMER_CLOCK_MHZ;
-                gMmwMssMCB.stats.featureExtractionTime_us = result->microDopplerOutParams.stats.featureExtractTime_cpuCycles/FRAME_REF_TIMER_CLOCK_MHZ;
-                gMmwMssMCB.stats.classifierTime_us = result->microDopplerOutParams.stats.classifierTime_cpuCycles/FRAME_REF_TIMER_CLOCK_MHZ;
-
-            }
-        }
-        #endif
+                    retVal = DPU_uDopProc_process(gMmwMssMCB.microDopDpuHandle,
+                                                &gMmwMssMCB.radarCube[0], //Major motion radar cube
+                                                &gMmwMssMCB.detMatrix[0], //Major motion detection matrix
+                                                &trackerData,
+                                                &result->microDopplerOutParams);
+                    if (retVal != 0)
+                    {
+                        CLI_write("Error: DPU_uDopProc_process failed with error code %d", retVal);
+                        DebugP_assert(0);
+                    }
+                    gMmwMssMCB.stats.microDopplerDpuTime_us = (Cycleprofiler_getTimeStamp() - microDopplerStartTime)/FRAME_REF_TIMER_CLOCK_MHZ;
+                    gMmwMssMCB.stats.featureExtractionTime_us = result->microDopplerOutParams.stats.featureExtractTime_cpuCycles/FRAME_REF_TIMER_CLOCK_MHZ;
+                    gMmwMssMCB.stats.classifierTime_us = result->microDopplerOutParams.stats.classifierTime_cpuCycles/FRAME_REF_TIMER_CLOCK_MHZ;
+                } // End if(trackerEnabled && indicateNoTarget == 0)
+            } // End microDoppler enabled check
+        } // End #if (CLI_REMOVAL == 0 || TRACKER_CLASSIFIER_ENABLE == 1)
+#endif
         
         #if (CLI_REMOVAL == 0)
         {
