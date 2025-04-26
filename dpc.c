@@ -121,7 +121,7 @@ extern uint32_t gpioBaseAddrLed, pinNumLed;
 
 #define MMWDEMO_RFPARSER_SPEED_OF_LIGHT_IN_METERS_PER_SEC (3e8)
 
-#define MANUAL_VS_RANGE_BIN 1
+#define MANUAL_VS_RANGE_BIN 2
 
 extern MmwDemo_MSS_MCB gMmwMssMCB; 
 extern MMWave_temperatureStats  tempStats;
