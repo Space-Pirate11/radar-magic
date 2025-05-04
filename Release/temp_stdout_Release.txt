@@ -1,0 +1,16 @@
+Parsing the input object file, Release/vital_signs_xwrl64xx.out.
+Appending zeros 4635872
+Appending zeros 4656360
+File conversion complete!
+Number of Input Files 2
+Number of zeros 48
+Number of zeros 32
+
+Parsing the input object file, Release/vital_signs_xwrl64xx.out.
+Appending zeros 4635872
+Appending zeros 4656360
+File conversion complete!
+Number of Input Files 2
+Number of zeros 48
+Number of zeros 32
+
